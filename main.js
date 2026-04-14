@@ -1,71 +1,101 @@
 import * as THREE from 'three';
+import { Matrix } from './matrix.js';
+import SGA, { TILE_TYPES } from './sga.js';
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
-
 const renderer = new THREE.WebGLRenderer();
 renderer.setSize( window.innerWidth, window.innerHeight );
 document.body.appendChild( renderer.domElement );
+camera.position.z = 30;
 
-const geometry = new THREE.BoxGeometry( 3, 0.5, 3 );
-const material = new THREE.MeshBasicMaterial( { color: 0xfcba03 } );
-const cube = new THREE.Mesh( geometry, material );
-// Draw only the box's actual edges (no triangle diagonals).
-const edges = new THREE.EdgesGeometry( geometry );
-const line = new THREE.LineSegments( edges );
-line.material.color.set( 0x000000 );
-cube.add( line );
+const startSgaButton = document.getElementById('start-sga');
+const profileResultsDiv = document.getElementById('profile-results');
+let gridGroup = new THREE.Group();
+scene.add(gridGroup);
 
-scene.add( cube );
+let sga; // Keep sga instance in a higher scope
 
-camera.position.z = 5;
-camera.position.y = 1;
+startSgaButton.addEventListener('click', () => {
+    runSGA();
+});
 
-// create a function to rotate the scene with mouse dragging
-let isDragging = false;
-const ROTATION_SPEED = 0.005;
-const cameraUp = new THREE.Vector3();
-const cameraRight = new THREE.Vector3();
-let previousMousePosition = {
-    x: 0,
-    y: 0
-};
+function runSGA() {
+    const memoryProfilingSupported = typeof performance.memory !== 'undefined';
+    let heapBefore = 0;
 
-function onMouseDown( event ) {
-    isDragging = true;
-    previousMousePosition.x = event.clientX;
-    previousMousePosition.y = event.clientY;
+    if (memoryProfilingSupported) {
+        heapBefore = performance.memory.usedJSHeapSize;
+        console.log(`Heap before: ${heapBefore} bytes`);
+    }
+
+    sga = new SGA(50); // Increased population size to 500
+    sga.initializePopulation();
+
+    const generations = 2000; // Increased generations to 200
+    for (let i = 0; i < generations; i++) {
+        sga.evolve();
+    }
+
+    const bestIndividual = sga.getBestIndividual().individual;
+    
+    if (memoryProfilingSupported) {
+        const heapAfter = performance.memory.usedJSHeapSize;
+        console.log(`Heap after: ${heapAfter} bytes`);
+        const heapUsed = (heapAfter - heapBefore) / 1024 / 1024; // in MB
+        profileResultsDiv.innerText = `SGA process took ${heapUsed.toFixed(100)} MB of heap.`;
+    } else {
+        profileResultsDiv.innerText = 'Memory profiling is not supported in this browser.';
+    }
+
+    renderGrid(bestIndividual);
 }
 
-function onMouseUp() {
-    isDragging = false;
-}
-
-
-function onMouseMove( event ) {
-    if ( isDragging ) {
-        const deltaX = event.clientX - previousMousePosition.x;
-        const deltaY = event.clientY - previousMousePosition.y;
-
-        // Scene-view style: rotate around camera up/right axes.
-        cameraUp.setFromMatrixColumn( camera.matrixWorld, 1 ).normalize();
-        cameraRight.setFromMatrixColumn( camera.matrixWorld, 0 ).normalize();
-
-        cube.rotateOnWorldAxis( cameraUp, deltaX * ROTATION_SPEED );
-        cube.rotateOnWorldAxis( cameraRight, deltaY * ROTATION_SPEED );
-
-        previousMousePosition.x = event.clientX;
-        previousMousePosition.y = event.clientY;
+function getColorForTile(tileType) {
+    // ... (color function remains the same)
+    switch (tileType) {
+        case TILE_TYPES.FLOOR:
+            return 0xffffff; // white
+        case TILE_TYPES.WALL:
+            return 0x808080; // grey
+        case TILE_TYPES.HAZARD:
+            return 0xff0000; // red
+        case TILE_TYPES.ITEM:
+            return 0xffff00; // yellow
+        case TILE_TYPES.START:
+            return 0x00ff00; // green
+        case TILE_TYPES.END:
+            return 0x0000ff; // blue
+        default:
+            return 0x000000; // black
     }
 }
 
-renderer.domElement.addEventListener( 'mousedown', onMouseDown, false );
-renderer.domElement.addEventListener( 'mouseup', onMouseUp, false );
-renderer.domElement.addEventListener( 'mousemove', onMouseMove, false );
+function renderGrid(individual) {
+    // Clear previous grid
+    while(gridGroup.children.length > 0){ 
+        const object = gridGroup.children[0];
+        object.geometry.dispose();
+        object.material.dispose();
+        gridGroup.remove(object);
+    }
+
+    const geometry = new THREE.PlaneGeometry( 1, 1 );
+    for (let i = 0; i < individual.height; i++) {
+        for (let j = 0; j < individual.width; j++) {
+            const value = individual.get(j, i);
+            const color = getColorForTile(value);
+            const material = new THREE.MeshBasicMaterial( { color: color } );
+            const plane = new THREE.Mesh( geometry, material );
+            plane.position.x = j - (individual.width / 2);
+            plane.position.y = i - (individual.height / 2);
+            gridGroup.add( plane );
+        }
+    }
+}
 
 function animate() {
     requestAnimationFrame( animate );
-
     renderer.render( scene, camera );
 }
 
