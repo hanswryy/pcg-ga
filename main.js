@@ -43,7 +43,7 @@ function runSGA() {
         const heapAfter = performance.memory.usedJSHeapSize;
         console.log(`Heap after: ${heapAfter} bytes`);
         const heapUsed = (heapAfter - heapBefore) / 1024 / 1024; // in MB
-        profileResultsDiv.innerText = `SGA process took ${heapUsed.toFixed(100)} MB of heap.`;
+        profileResultsDiv.innerText = `SGA process took ${heapUsed.toFixed(2)} MB of heap.`;
     } else {
         profileResultsDiv.innerText = 'Memory profiling is not supported in this browser.';
     }

@@ -1,4 +1,5 @@
 import { Matrix } from './matrix.js';
+import { aStar } from './a-star.js';
 
 // Tile types
 export const TILE_TYPES = {
@@ -101,12 +102,10 @@ class SGA {
         return F_total;
     }
 
-    // Placeholder for A* pathfinding algorithm
+    // A* pathfinding algorithm
     hasPath(individual, start, end) {
         if (!start || !end) return false;
-        // A* implementation will go here. For now, we'll just check a direct line.
-        // This is a simplification and should be replaced with a full A* implementation.
-        return true; // Assume a path always exists for now
+        return aStar(individual, start, end);
     }
 
     // Evolve the population to the next generation
