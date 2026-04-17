@@ -29,10 +29,10 @@ function runSGA() {
         console.log(`Heap before: ${heapBefore} bytes`);
     }
 
-    sga = new SGA(50); // Increased population size to 500
+    sga = new SGA(50);
     sga.initializePopulation();
 
-    const generations = 2000; // Increased generations to 200
+    const generations = 2000; // Increased generations to 2000
     for (let i = 0; i < generations; i++) {
         sga.evolve();
     }
@@ -52,7 +52,6 @@ function runSGA() {
 }
 
 function getColorForTile(tileType) {
-    // ... (color function remains the same)
     switch (tileType) {
         case TILE_TYPES.FLOOR:
             return 0xffffff; // white

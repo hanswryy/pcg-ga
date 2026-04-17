@@ -16,6 +16,7 @@ class SGA {
     constructor(populationSize = 50) {
         this.populationSize = populationSize;
         this.population = [];
+        this.evolutionHistory = [];
         this.generation = 0;
     }
 
@@ -110,21 +111,57 @@ class SGA {
 
     // Evolve the population to the next generation
     evolve() {
-        // Median-Cut selection: discard bottom 50%, clone top 50%
-        const topHalf = this.population.slice(0, this.populationSize / 2);
-        const newPopulation = [...topHalf, ...topHalf.map(p => ({ individual: this.clone(p.individual), fitness: p.fitness }))];
+        // // Median-Cut selection: discard bottom 50%, clone top 50%
+        // const topHalf = this.population.slice(0, this.populationSize / 2);
+        // const newPopulation = [...topHalf, ...topHalf.map(p => ({ individual: this.clone(p.individual), fitness: p.fitness }))];
         
-        this.population = newPopulation;
+        // this.population = newPopulation;
 
-        // Apply mutation to the new population to introduce variation
-        for(let i = 0; i < this.population.length; i++) {
-            if (i >= this.populationSize / 2) { // Only mutate the cloned half
-                this.mutate(this.population[i].individual);
-            }
-        }
+        // // Apply mutation to the new population to introduce variation
+        // for(let i = 0; i < this.population.length; i++) {
+        //     if (i >= this.populationSize / 2) { // Only mutate the cloned half
+        //         this.mutate(this.population[i].individual);
+        //     }
+        // }
+
+        // this.evaluatePopulation();
+        // this.generation++;
+
+        if (!this.evolutionHistory) this.evolutionHistory = [];
+        this.evolutionHistory.push([...this.population]);
+
+        const topHalf = this.population.slice(0, this.populationSize / 2);
+
+        let survivingParents = topHalf.map(p => ({
+            individual: this.eClone(p.individual),
+            fitness: p.fitness
+        }));
+
+        let offspring = topHalf.map(p => {
+            let childMatrix = this.eClone(p.individual);
+            let mutatedChildMatrix = this.eMutate(childMatrix);
+            return { individual: mutatedChildMatrix, fitness: 0 };
+        });
+
+        this.population = [...survivingParents, ...offspring];
 
         this.evaluatePopulation();
         this.generation++;
+    }
+
+    eClone(individual) {
+        const newIndividual = new Matrix(individual.width, individual.height);
+        
+        const tempGrid = Array.from({ length: individual.height }, (_, y) => 
+            Array.from({ length: individual.width }, (_, x) => individual.get(x, y))
+        );
+
+        for (let y = 0; y < individual.height; y++) {
+            for (let x = 0; x < individual.width; x++) {
+                newIndividual.set(x, y, tempGrid[y][x]);
+            }
+        }
+        return newIndividual; 
     }
 
     // Clone an individual
@@ -136,6 +173,23 @@ class SGA {
             }
         }
         return newIndividual;
+    }
+
+    eMutate(individual, mutationRate = 0.01) {
+        const mutatedIndividual = new Matrix(individual.width, individual.height);
+
+        for (let y = 0; y < individual.height; y++) {
+            for (let x = 0; x < individual.width; x++) {
+                const currentTile = individual.get(x, y);
+                
+                if (Math.random() < mutationRate && currentTile !== TILE_TYPES.START && currentTile !== TILE_TYPES.END) {
+                    mutatedIndividual.set(x, y, currentTile === TILE_TYPES.FLOOR ? TILE_TYPES.WALL : TILE_TYPES.FLOOR);
+                } else {
+                    mutatedIndividual.set(x, y, currentTile);
+                }
+            }
+        }
+        return mutatedIndividual; 
     }
 
     // Mutate an individual
