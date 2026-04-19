@@ -55,7 +55,7 @@ export function aStar(grid, start, end) {
             }
 
             const tile = grid.get(neighbor.x, neighbor.y);
-            if (tile === 2) { // TILE_TYPES.WALL
+            if (tile === 3) { // TILE_TYPES.WALL
                 continue;
             }
 

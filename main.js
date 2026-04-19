@@ -53,7 +53,7 @@ function runSGA() {
 
 function getColorForTile(tileType) {
     switch (tileType) {
-        case TILE_TYPES.FLOOR:
+        case TILE_TYPES.EMPTY:
             return 0xffffff; // white
         case TILE_TYPES.WALL:
             return 0x808080; // grey
