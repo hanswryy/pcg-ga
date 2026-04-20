@@ -1,5 +1,6 @@
 import { Matrix } from './matrix.js';
 import { aStar } from './a-star.js';
+import { random } from './seeded-random.js';
 
 // Tile types
 export const TILE_TYPES = {
@@ -39,7 +40,7 @@ class SGA {
         for (let y = 0; y < individual.height; y++) {
             for (let x = 0; x < individual.width; x++) {
                 // Random between 2 and 5 (EMPTY, WALL, HAZARD, ITEM)
-                const tileType = Math.floor(Math.random() * 4) + 2;
+                const tileType = Math.floor(random() * 4) + 2;
                 individual.set(x, y, tileType);
             }
         }
@@ -48,10 +49,10 @@ class SGA {
         let startX, startY, endX, endY;
         
         do {
-            startX = Math.floor(Math.random() * individual.width);
-            startY = Math.floor(Math.random() * individual.height);
-            endX = Math.floor(Math.random() * individual.width);
-            endY = Math.floor(Math.random() * individual.height);
+            startX = Math.floor(random() * individual.width);
+            startY = Math.floor(random() * individual.height);
+            endX = Math.floor(random() * individual.width);
+            endY = Math.floor(random() * individual.height);
         } while (startX === endX && startY === endY);
 
         individual.set(startX, startY, TILE_TYPES.START);
@@ -342,10 +343,10 @@ class SGA {
         for (let y = 0; y < individual.height; y++) {
             for (let x = 0; x < individual.width; x++) {
                 const currentTile = individual.get(x, y);
-                if (Math.random() < mutationRate && currentTile !== TILE_TYPES.START && currentTile !== TILE_TYPES.END) {
+                if (random() < mutationRate && currentTile !== TILE_TYPES.START && currentTile !== TILE_TYPES.END) {
                     let newTile;
                     do {
-                        newTile = Math.floor(Math.random() * 4) + 2;
+                        newTile = Math.floor(random() * 4) + 2;
                     } while (newTile === currentTile);
                     
                     individual.set(x, y, newTile);

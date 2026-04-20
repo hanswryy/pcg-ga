@@ -1,5 +1,6 @@
 import { Matrix } from './matrix.js';
 import { aStar } from './a-star.js';
+import { random } from './seeded-random.js';
 
 // Tile types
 export const TILE_TYPES = {
@@ -54,7 +55,7 @@ class MGA {
         for (let y = 0; y < individual.height; y++) {
             for (let x = 0; x < individual.width; x++) {
                 // Random between 2 and 5 (EMPTY, WALL, HAZARD, ITEM)
-                const tileType = Math.floor(Math.random() * 4) + 2;
+                const tileType = Math.floor(random() * 4) + 2;
                 individual.set(x, y, tileType);
             }
         }
@@ -63,10 +64,10 @@ class MGA {
         let startX, startY, endX, endY;
         
         do {
-            startX = Math.floor(Math.random() * individual.width);
-            startY = Math.floor(Math.random() * individual.height);
-            endX = Math.floor(Math.random() * individual.width);
-            endY = Math.floor(Math.random() * individual.height);
+            startX = Math.floor(random() * individual.width);
+            startY = Math.floor(random() * individual.height);
+            endX = Math.floor(random() * individual.width);
+            endY = Math.floor(random() * individual.height);
         } while (startX === endX && startY === endY);
 
         individual.set(startX, startY, TILE_TYPES.START);
@@ -318,7 +319,7 @@ class MGA {
         let bestFitness = -1;
 
         for (let i = 0; i < k; i++) {
-            const randomIndex = Math.floor(Math.random() * this.activePopulationSize);
+            const randomIndex = Math.floor(random() * this.activePopulationSize);
             if (this.population[randomIndex].fitness > bestFitness) {
                 bestFitness = this.population[randomIndex].fitness;
                 bestIndex = randomIndex;
@@ -389,14 +390,14 @@ class MGA {
     mutate(individual, mutationRate = 0.05) {
         for (let y = 0; y < individual.height; y++) {
             for (let x = 0; x < individual.width; x++) {
-                if (Math.random() < mutationRate) {
+                if (random() < mutationRate) {
                     const currentTile = individual.get(x, y);
                     // Hindari mutasi pada tile start/end
                     if (currentTile !== TILE_TYPES.START && currentTile !== TILE_TYPES.END) {
                         // Pastikan tile baru berbeda dari yang lama
                         let newTile;
                         do {
-                            newTile = Math.floor(Math.random() * 4) + 2;
+                            newTile = Math.floor(random() * 4) + 2;
                         } while (newTile === currentTile);
                         
                         individual.set(x, y, newTile);

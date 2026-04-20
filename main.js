@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Matrix } from './matrix.js';
 import SGA, { TILE_TYPES } from './sga.js';
 import MGA from './mga.js';
+import { setSeed } from './seeded-random.js';
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -21,10 +22,14 @@ let sga;
 let mga;
 
 startSgaButton.addEventListener('click', () => {
+    const seed = parseInt(document.getElementById('seed-input').value) || 0;
+    setSeed(seed);
     runSGA();
 });
 
 startMgaButton.addEventListener('click', () => {
+    const seed = parseInt(document.getElementById('seed-input').value) || 0;
+    setSeed(seed);
     runMGA();
 });
 
