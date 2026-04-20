@@ -1,7 +1,7 @@
 export class Matrix {
     constructor() {
-        this.width = 20;
-        this.height = 20;
+        this.width = 10;
+        this.height = 10;
         this.grid = [];
         this.init();
     }

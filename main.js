@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Matrix } from './matrix.js';
 import SGA, { TILE_TYPES } from './sga.js';
+import MGA from './mga.js';
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );
@@ -10,25 +11,24 @@ document.body.appendChild( renderer.domElement );
 camera.position.z = 30;
 
 const startSgaButton = document.getElementById('start-sga');
-const profileResultsDiv = document.getElementById('profile-results');
+const startMgaButton = document.getElementById('start-mga');
+const fitnessDisplay = document.getElementById('fitness-display');
+
 let gridGroup = new THREE.Group();
 scene.add(gridGroup);
 
-let sga; // Keep sga instance in a higher scope
+let sga;
+let mga;
 
 startSgaButton.addEventListener('click', () => {
     runSGA();
 });
 
+startMgaButton.addEventListener('click', () => {
+    runMGA();
+});
+
 function runSGA() {
-    const memoryProfilingSupported = typeof performance.memory !== 'undefined';
-    let heapBefore = 0;
-
-    if (memoryProfilingSupported) {
-        heapBefore = performance.memory.usedJSHeapSize;
-        console.log(`Heap before: ${heapBefore} bytes`);
-    }
-
     sga = new SGA(50);
     sga.initializePopulation();
 
@@ -37,18 +37,29 @@ function runSGA() {
         sga.evolve();
     }
 
-    const bestIndividual = sga.getBestIndividual().individual;
-    
-    if (memoryProfilingSupported) {
-        const heapAfter = performance.memory.usedJSHeapSize;
-        console.log(`Heap after: ${heapAfter} bytes`);
-        const heapUsed = (heapAfter - heapBefore) / 1024 / 1024; // in MB
-        profileResultsDiv.innerText = `SGA process took ${heapUsed.toFixed(2)} MB of heap.`;
-    } else {
-        profileResultsDiv.innerText = 'Memory profiling is not supported in this browser.';
+    const best = sga.getBestIndividual();
+    const bestIndividual = best.individual;
+    fitnessDisplay.innerText = `SGA Best Fitness: ${best.fitness}`;
+ 
+    renderGrid(bestIndividual);
+    fitnessDisplay.textContent = sga.getBestIndividual().fitness;
+}
+
+function runMGA() {
+    mga = new MGA(50, 10, 10);
+    mga.initializePopulation();
+
+    const generations = 2000; // Increased generations to 2000
+    for (let i = 0; i < generations; i++) {
+        mga.evolve();
     }
 
+    const best = mga.getBestIndividual();
+    const bestIndividual = best.individual;
+    fitnessDisplay.innerText = `MGA Best Fitness: ${best.fitness}`;
+
     renderGrid(bestIndividual);
+    fitnessDisplay.textContent = mga.getBestIndividual().fitness;
 }
 
 function getColorForTile(tileType) {

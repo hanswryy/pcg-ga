@@ -11,24 +11,39 @@ export const TILE_TYPES = {
     ITEM: 5,
 };
 
-class SGA {
-    constructor(populationSize = 50) {
+class MGA {
+    constructor(populationSize = 50, width = 20, height = 20) {
         this.populationSize = populationSize;
+        this.activePopulationSize = populationSize; // Ukuran populasi aktif saat ini
+        this.width = width;
+        this.height = height;
+
+        // 1. Static Memory Pooling: Alokasikan semua buffer di awal
         this.population = [];
+        for (let i = 0; i < populationSize; i++) {
+            this.population.push({
+                individual: new Matrix(width, height), // Buffer matriks yang sudah dialokasikan
+                fitness: 0
+            });
+        }
+
         this.evolutionHistory = [];
         this.generation = 0;
 
         this.criteriaWeights = [0.25, 0.25, 0.25, 0.25];
-        this.criteriaMaxValues = [1.0, 1.0, 28.28, 1.0];
+        this.criteriaMaxValues = [1.0, 1.0, Math.sqrt(width*width + height*height), 1.0];
+
+        // Pengaturan untuk penyusutan populasi dinamis
+        this.shrinkGeneration = 50; // Generasi di mana penyusutan dimulai
+        this.shrinkFactor = 0.5;    // Faktor pengurangan (misal: 50%)
     }
 
     // Initialize population
     initializePopulation() {
-        this.population = [];
+        // Cukup isi individu yang sudah ada, tidak perlu membuat baru
         for (let i = 0; i < this.populationSize; i++) {
-            const individual = new Matrix();
-            this.createIndividual(individual);
-            this.population.push({ individual, fitness: 0 });
+            this.createIndividual(this.population[i].individual);
+            this.population[i].fitness = 0;
         }
         this.evaluatePopulation();
     }
@@ -63,7 +78,8 @@ class SGA {
         // WASPAS #1: Data Matrix Creation
         let criteriaMatrix = [];
 
-        for (const pop of this.population) {
+        for (let i = 0; i < this.activePopulationSize; i++) {
+            const pop = this.population[i];
             let chromosome = pop.individual;
 
             if (!this.constraintsSatisfied(chromosome)) {
@@ -80,7 +96,7 @@ class SGA {
             criteriaMatrix.push([symmetry, emptySpaceBalance, playerExitDistance, safeZone]);
         }
 
-        for (let i = 0; i < this.population.length; i++) {
+        for (let i = 0; i < this.activePopulationSize; i++) {
             let rawScores = criteriaMatrix[i];
             let neutrosophicSets = [];
         
@@ -296,70 +312,112 @@ class SGA {
         return aStar(individual, start, end);
     }
 
+    // 2. Metode Seleksi bebas alokasi (Tournament Selection berbasis Indeks)
+    tournamentSelection(k = 3) {
+        let bestIndex = -1;
+        let bestFitness = -1;
+
+        for (let i = 0; i < k; i++) {
+            const randomIndex = Math.floor(Math.random() * this.activePopulationSize);
+            if (this.population[randomIndex].fitness > bestFitness) {
+                bestFitness = this.population[randomIndex].fitness;
+                bestIndex = randomIndex;
+            }
+        }
+        return bestIndex;
+    }
+
     // Evolve the population to the next generation
     evolve() {
         if (!this.evolutionHistory) this.evolutionHistory = [];
-        this.evolutionHistory.push([...this.population]);
+        // Simpan snapshot dari populasi aktif saat ini
+        const currentActivePopulation = [];
+        for(let i = 0; i < this.activePopulationSize; i++) {
+            currentActivePopulation.push({
+                individual: this.clone(this.population[i].individual),
+                fitness: this.population[i].fitness
+            });
+        }
+        this.evolutionHistory.push(currentActivePopulation);
 
-        // Sort population by fitness in descending order
-        this.population.sort((a, b) => b.fitness - a.fitness);
+        // 4. Penyusutan Populasi Dinamis
+        if (this.generation === this.shrinkGeneration) {
+            this.activePopulationSize = Math.floor(this.activePopulationSize * this.shrinkFactor);
+        }
 
-        const topHalf = this.population.slice(0, this.populationSize / 2);
+        // Buat populasi baru tanpa alokasi baru (menggunakan buffer yang ada)
+        const newPopulationIndices = [];
+        for (let i = 0; i < this.activePopulationSize; i++) {
+            newPopulationIndices.push(this.tournamentSelection());
+        }
 
-        let survivingParents = topHalf.map(p => ({
-            individual: this.eClone(p.individual),
-            fitness: p.fitness
-        }));
+        // Salin individu terpilih ke awal buffer populasi
+        const tempPopulation = [];
+        for(let i = 0; i < this.activePopulationSize; i++) {
+            const parentIndex = newPopulationIndices[i];
+            tempPopulation.push({
+                individual: this.clone(this.population[parentIndex].individual),
+                fitness: this.population[parentIndex].fitness
+            });
+        }
 
-        let offspring = topHalf.map(p => {
-            let childMatrix = this.eClone(p.individual);
-            this.eMutate(childMatrix, 0.05);
-            return { individual: childMatrix, fitness: 0 };
-        });
+        for(let i = 0; i < this.activePopulationSize; i++) {
+            this.population[i] = tempPopulation[i];
+        }
 
-        this.population = [...survivingParents, ...offspring];
+        // Terapkan mutasi pada paruh kedua dari populasi aktif
+        for (let i = Math.floor(this.activePopulationSize / 2); i < this.activePopulationSize; i++) {
+            this.mutate(this.population[i].individual);
+        }
 
         this.evaluatePopulation();
         this.generation++;
     }
 
-    eClone(individual) {
+    // Clone an individual (digunakan untuk history dan penyalinan sementara)
+    clone(individual) {
         const newIndividual = new Matrix(individual.width, individual.height);
-        
-        const tempGrid = Array.from({ length: individual.height }, (_, y) => 
-            Array.from({ length: individual.width }, (_, x) => individual.get(x, y))
-        );
-
         for (let y = 0; y < individual.height; y++) {
             for (let x = 0; x < individual.width; x++) {
-                newIndividual.set(x, y, tempGrid[y][x]);
+                newIndividual.set(x, y, individual.get(x, y));
             }
         }
-        return newIndividual; 
+        return newIndividual;
     }
-    
-    eMutate(individual, mutationRate = 0.05) {        
+
+    // 3. Modifikasi Memori Langsung (Mutasi)
+    mutate(individual, mutationRate = 0.05) {
         for (let y = 0; y < individual.height; y++) {
             for (let x = 0; x < individual.width; x++) {
-                const currentTile = individual.get(x, y);
-                if (Math.random() < mutationRate && currentTile !== TILE_TYPES.START && currentTile !== TILE_TYPES.END) {
-                    let newTile;
-                    do {
-                        newTile = Math.floor(Math.random() * 4) + 2;
-                    } while (newTile === currentTile);
-                    
-                    individual.set(x, y, newTile);
+                if (Math.random() < mutationRate) {
+                    const currentTile = individual.get(x, y);
+                    // Hindari mutasi pada tile start/end
+                    if (currentTile !== TILE_TYPES.START && currentTile !== TILE_TYPES.END) {
+                        // Pastikan tile baru berbeda dari yang lama
+                        let newTile;
+                        do {
+                            newTile = Math.floor(Math.random() * 4) + 2;
+                        } while (newTile === currentTile);
+                        
+                        individual.set(x, y, newTile);
+                    }
                 }
             }
         }
-        
-        return individual; 
     }
 
     // Get the best individual from the current population
     getBestIndividual() {
-        return this.population[0];
+        let bestFitness = -1;
+        let bestIndividual = null;
+        for (let i = 0; i < this.activePopulationSize; i++) {
+            if (this.population[i].fitness > bestFitness) {
+                bestFitness = this.population[i].fitness;
+                bestIndividual = this.population[i];
+            }
+        }
+        return bestIndividual;
     }
 }
 
-export default SGA;
+export default MGA;
