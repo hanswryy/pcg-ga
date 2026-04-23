@@ -21,9 +21,20 @@ class MGA {
 
         // 1. Static Memory Pooling: Alokasikan semua buffer di awal
         this.population = [];
+        this.nextPopulation = [];
+
+        this.selectedIndicesBuffer = new Array(populationSize);
+
+        this.criteriaMatrixBuffer = Array.from({ length: populationSize }, () => [0, 0, 0, 0]);
+        this.neutrosophicBuffer = Array.from({ length: 4 }, () => ({ t: 0, i: 0, f: 0 }));
+
         for (let i = 0; i < populationSize; i++) {
             this.population.push({
                 individual: new Matrix(width, height), // Buffer matriks yang sudah dialokasikan
+                fitness: 0
+            });
+            this.nextPopulation.push({
+                individual: new Matrix(width, height), // Buffer matriks untuk generasi berikutnya
                 fitness: 0
             });
         }
@@ -77,29 +88,27 @@ class MGA {
     // Evaluate the fitness of the entire population
     evaluatePopulation() {
         // WASPAS #1: Data Matrix Creation
-        let criteriaMatrix = [];
-
         for (let i = 0; i < this.activePopulationSize; i++) {
             const pop = this.population[i];
             let chromosome = pop.individual;
 
             if (!this.constraintsSatisfied(chromosome)) {
                 pop.fitness = 0;
-                criteriaMatrix.push([0, 0, 0, 0]);
+                this.criteriaMatrixBuffer[i][0] = 0; // Symmetry
+                this.criteriaMatrixBuffer[i][1] = 0; // Empty Space Balance
+                this.criteriaMatrixBuffer[i][2] = 0; // Player-Exit Distance
+                this.criteriaMatrixBuffer[i][3] = 0; // Safe Zone
                 continue;
             }
 
-            let symmetry = this.calculateSymmetry(chromosome);
-            let emptySpaceBalance = this.calculateEmptySpaceBalance(chromosome);
-            let playerExitDistance = this.calculatePlayerExitDistance(chromosome);
-            let safeZone = this.calculateSafeZone(chromosome);
-
-            criteriaMatrix.push([symmetry, emptySpaceBalance, playerExitDistance, safeZone]);
+            this.criteriaMatrixBuffer[i][0] = this.calculateSymmetry(chromosome);
+            this.criteriaMatrixBuffer[i][1] = this.calculateEmptySpaceBalance(chromosome);
+            this.criteriaMatrixBuffer[i][2] = this.calculatePlayerExitDistance(chromosome);
+            this.criteriaMatrixBuffer[i][3] = this.calculateSafeZone(chromosome);
         }
 
         for (let i = 0; i < this.activePopulationSize; i++) {
-            let rawScores = criteriaMatrix[i];
-            let neutrosophicSets = [];
+            let rawScores = this.criteriaMatrixBuffer[i];
         
             // WASPAS #2 & #3: Normalization and Neutrosophication
             for (let j = 0; j < rawScores.length; j++) {
@@ -110,20 +119,18 @@ class MGA {
                 normalizedS = normalizedS * 0.9; 
 
                 // Konversi skalar ke Himpunan Neutrosophic (Truth, Intermediacy, Falsehood)
-                neutrosophicSets.push({
-                    t: normalizedS,         // Truth (t)
-                    i: 1 - normalizedS,     // Intermediacy (i)
-                    f: 1 - normalizedS      // Falsehood (f)
-                });
+                this.neutrosophicBuffer[j].t = normalizedS; // Truth
+                this.neutrosophicBuffer[j].i = 1 - normalizedS; // Intermediacy
+                this.neutrosophicBuffer[j].f = 1 - normalizedS; // Falsehood
             }
 
             // WASPAS #4 & #5: Weighted Sum Model (WSM) & Weighted Product Model (WPM)
             let sum_t = 0;
             let prod_t = 1;
 
-            for (let j = 0; j < neutrosophicSets.length; j++) {
+            for (let j = 0; j < this.neutrosophicBuffer.length; j++) {
                 let weight = this.criteriaWeights[j];
-                let truthVal = neutrosophicSets[j].t;
+                let truthVal = this.neutrosophicBuffer[j].t;
 
                 // Kalkulasi WSM (Pendekatan Aritmatika Neutrosophic dari Flowchart Petrovas)
                 let wsm_val = 1 - Math.pow(1 - truthVal, weight);
@@ -347,30 +354,34 @@ class MGA {
         }
 
         // Buat populasi baru tanpa alokasi baru (menggunakan buffer yang ada)
-        const newPopulationIndices = [];
         for (let i = 0; i < this.activePopulationSize; i++) {
-            newPopulationIndices.push(this.tournamentSelection());
+            this.selectedIndicesBuffer[i] = this.tournamentSelection();
         }
 
-        // Salin individu terpilih ke awal buffer populasi
-        const tempPopulation = [];
+        // Overwrite data ke nextPopulation tanpa membuat objek baru
         for(let i = 0; i < this.activePopulationSize; i++) {
-            const parentIndex = newPopulationIndices[i];
-            tempPopulation.push({
-                individual: this.clone(this.population[parentIndex].individual),
-                fitness: this.population[parentIndex].fitness
-            });
+            const parentIndex = this.selectedIndicesBuffer[i];
+            const parentMatrix = this.population[parentIndex].individual;
+            const targetMatrix = this.nextPopulation[i].individual;
+            
+            for (let y = 0; y < this.height; y++) {
+                for (let x = 0; x < this.width; x++) {
+                    targetMatrix.set(x, y, parentMatrix.get(x, y));
+                }
+            }
+            this.nextPopulation[i].fitness = this.population[parentIndex].fitness;
         }
 
-        for(let i = 0; i < this.activePopulationSize; i++) {
-            this.population[i] = tempPopulation[i];
-        }
+        // Swap penunjuk populasi
+        let temp = this.population;
+        this.population = this.nextPopulation;
+        this.nextPopulation = temp;
 
         // Terapkan mutasi pada paruh kedua dari populasi aktif
         for (let i = Math.floor(this.activePopulationSize / 2); i < this.activePopulationSize; i++) {
             this.mutate(this.population[i].individual);
         }
-
+        
         this.evaluatePopulation();
         this.generation++;
     }
