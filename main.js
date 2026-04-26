@@ -33,38 +33,106 @@ startMgaButton.addEventListener('click', () => {
     runMGA();
 });
 
+function createHeapRecorder(sampleEvery = 100) {
+    const samples = [];
+    const canMeasure = typeof performance !== 'undefined' &&
+        performance.memory &&
+        typeof performance.memory.usedJSHeapSize === 'number';
+
+    function record(generation) {
+        if (!canMeasure || generation % sampleEvery !== 0) {
+            return;
+        }
+
+        samples.push({
+            generation,
+            usedJSHeapSize: performance.memory.usedJSHeapSize,
+        });
+    }
+
+    function getMean() {
+        if (samples.length === 0) {
+            return 0;
+        }
+
+        const total = samples.reduce((sum, sample) => sum + sample.usedJSHeapSize, 0);
+        return total / samples.length;
+    }
+
+    return {
+        record,
+        getReport() {
+            return {
+                canMeasure,
+                sampleEvery,
+                samples,
+                meanUsedHeapSize: getMean(),
+            };
+        },
+    };
+}
+
+function formatBytesToMB(bytes) {
+    return (bytes / (1024 * 1024)).toFixed(2);
+}
+
+function updateExperimentDisplay(algorithmName, fitness, report) {
+    if (!report.canMeasure || report.samples.length === 0) {
+        fitnessDisplay.textContent = `${algorithmName} Best Fitness: ${fitness} | Mean Heap: N/A (performance.memory not available)`;
+        return;
+    }
+
+    fitnessDisplay.textContent = `${algorithmName} Best Fitness: ${fitness} | Mean Heap: ${formatBytesToMB(report.meanUsedHeapSize)} MB (${Math.round(report.meanUsedHeapSize)} bytes) | Samples: ${report.samples.length}`;
+}
+
 function runSGA() {
     sga = new SGA(50);
     sga.initializePopulation();
+    const heapRecorder = createHeapRecorder(100);
 
     const generations = 2000; // Increased generations to 2000
     for (let i = 0; i < generations; i++) {
         sga.evolve();
+        heapRecorder.record(i + 1);
+    }
+
+    const heapReport = heapRecorder.getReport();
+    if (heapReport.canMeasure) {
+        console.log(`[SGA] Mean usedJSHeapSize: ${Math.round(heapReport.meanUsedHeapSize)} bytes`, heapReport.samples);
+    } else {
+        console.warn('[SGA] performance.memory.usedJSHeapSize is not available in this browser.');
     }
 
     const best = sga.getBestIndividual();
     const bestIndividual = best.individual;
-    fitnessDisplay.innerText = `SGA Best Fitness: ${best.fitness}`;
+    updateExperimentDisplay('SGA', best.fitness, heapReport);
  
     renderGrid(bestIndividual);
-    fitnessDisplay.textContent = sga.getBestIndividual().fitness;
 }
 
 function runMGA() {
-    mga = new MGA(50, 10, 10);
+    mga = new MGA(50);
     mga.initializePopulation();
+    const heapRecorder = createHeapRecorder(100);
 
     const generations = 2000; // Increased generations to 2000
     for (let i = 0; i < generations; i++) {
         mga.evolve();
+        heapRecorder.record(i + 1);
+    }
+
+    const heapReport = heapRecorder.getReport();
+    if (heapReport.canMeasure) {
+        console.log(`[MGA] Mean usedJSHeapSize: ${Math.round(heapReport.meanUsedHeapSize)} bytes`, heapReport.samples);
+    } else {
+        console.warn('[MGA] performance.memory.usedJSHeapSize is not available in this browser.');
     }
 
     const best = mga.getBestIndividual();
     const bestIndividual = best.individual;
-    fitnessDisplay.innerText = `MGA Best Fitness: ${best.fitness}`;
+    updateExperimentDisplay('MGA', best.fitness, heapReport);
 
     renderGrid(bestIndividual);
-    fitnessDisplay.textContent = mga.getBestIndividual().fitness;
 }
 
 function getColorForTile(tileType) {

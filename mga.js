@@ -12,29 +12,51 @@ export const TILE_TYPES = {
     ITEM: 5,
 };
 
+const NUM_CRITERIA = 4;   // symmetry, emptyBalance, playerExitDist, safeZone
+const LAMBDA       = 0.5; // Dissertation Section 2.4, Eq. 2.18:
+                           // "λ is defined as 0.5 to have a neutral impact"
+const EPSILON      = 1e-9; // Guard against zero divisors in kia/kib/kic
+
 class MGA {
-    constructor(populationSize = 50, width = 20, height = 20) {
+    constructor(populationSize = 50, width = 10, height = 10) {
         this.populationSize = populationSize;
-        this.activePopulationSize = populationSize; // Ukuran populasi aktif saat ini
-        this.width = width;
+        this.activePopulationSize = populationSize;
+        this.width  = width;
         this.height = height;
 
-        // 1. Static Memory Pooling: Alokasikan semua buffer di awal
-        this.population = [];
+        // ── Teknik 1: Static Memory Pooling ───────────────────────────────────
+        // Pre-alokasi seluruh buffer matriks kromosom sekaligus di awal program.
+        // Tidak ada Matrix baru yang dibuat selama siklus generasi berlangsung.
+        this.population     = [];
         this.nextPopulation = [];
 
+        // Buffer indeks untuk Tournament Selection — tidak pernah diganti
         this.selectedIndicesBuffer = new Array(populationSize);
 
-        this.criteriaMatrixBuffer = Array.from({ length: populationSize }, () => [0, 0, 0, 0]);
-        this.neutrosophicBuffer = Array.from({ length: 4 }, () => ({ t: 0, i: 0, f: 0 }));
+        // Pre-alokasi buffer criteria matrix (satu baris per individu)
+        // Digunakan kembali setiap generasi tanpa alokasi baru — CoCoSo Step 1
+        this.criteriaMatrixBuffer = Array.from(
+            { length: populationSize }, () => new Float64Array(NUM_CRITERIA)
+        );
+
+        // Pre-alokasi buffer Ri dan Pi per individu — CoCoSo Eqs. 2.22–2.23
+        // Float64Array digunakan agar tidak ada objek JS baru per individu
+        this.riBuffer = new Float64Array(populationSize); // weighted sum
+        this.piBuffer = new Float64Array(populationSize); // weighted product
+
+        // Pre-alokasi buffer untuk tiga appraisal scores per individu
+        // kia (Eq. 2.26), kib (Eq. 2.31), kic (Eq. 2.32)
+        this.kiaBuffer = new Float64Array(populationSize);
+        this.kibBuffer = new Float64Array(populationSize);
+        this.kicBuffer = new Float64Array(populationSize);
 
         for (let i = 0; i < populationSize; i++) {
             this.population.push({
-                individual: new Matrix(width, height), // Buffer matriks yang sudah dialokasikan
+                individual: new Matrix(width, height),
                 fitness: 0
             });
             this.nextPopulation.push({
-                individual: new Matrix(width, height), // Buffer matriks untuk generasi berikutnya
+                individual: new Matrix(width, height),
                 fitness: 0
             });
         }
@@ -43,11 +65,38 @@ class MGA {
         this.generation = 0;
 
         this.criteriaWeights = [0.25, 0.25, 0.25, 0.25];
-        this.criteriaMaxValues = [1.0, 1.0, Math.sqrt(width*width + height*height), 1.0];
 
-        // Pengaturan untuk penyusutan populasi dinamis
-        this.shrinkGeneration = 50; // Generasi di mana penyusutan dimulai
-        this.shrinkFactor = 0.5;    // Faktor pengurangan (misal: 50%)
+        // ── CoCoSo global boundary state ──────────────────────────────────────
+        // Dissertation Section 2.4.1:
+        // "The normalisation process is adjusted to utilise the smallest
+        //  criterion values across all generations rather than relying solely
+        //  on values generated within a single generation."
+        //
+        // Unlike SGA which retains full criteriaMatrixHistory to recompute
+        // these each generation, MGA maintains only running scalar extremes —
+        // four min values and four max values — updated in-place each generation.
+        // This is the memory-optimised form: O(1) storage instead of O(n*l).
+        this.globalCriteriaMin = new Float64Array(NUM_CRITERIA).fill(Infinity);
+        this.globalCriteriaMax = new Float64Array(NUM_CRITERIA).fill(-Infinity);
+
+        // CoCoSo global Ri/Pi bounds — Dissertation Eqs. 2.27–2.30
+        // r1 = global min Ri, r2 = global min Pi
+        // p1 = global max Ri, p2 = global max Pi
+        // Again stored as four scalars instead of full riPiHistory.
+        this.r1 = Infinity;
+        this.r2 = Infinity;
+        this.p1 = -Infinity;
+        this.p2 = -Infinity;
+
+        // CoCoSo constant A — Dissertation Eq. 2.24
+        // A = Σ all past ki / nl  (running mean across all chromosomes × generations)
+        // Stored as two scalars (sum + count) instead of full fitnessHistory.
+        this.fitnessSum   = 0;
+        this.fitnessCount = 0;
+
+        // Pengaturan untuk penyusutan populasi dinamis (Teknik 3)
+        this.shrinkGeneration = 50;
+        this.shrinkFactor     = 0.5;
     }
 
     // Initialize population
@@ -85,19 +134,24 @@ class MGA {
         individual.set(endX, endY, TILE_TYPES.END);
     }
 
-    // Evaluate the fitness of the entire population
+    // Evaluate the fitness of the entire population using neutrosophic CoCoSo
+    // Dissertation Section 2.4 (Eqs. 2.11–2.19) + Section 2.4.1 (Eqs. 2.20–2.32)
+    //
+    // Memory strategy: all intermediate values are written into pre-allocated
+    // Float64Array buffers. No new objects or arrays are created here.
     evaluatePopulation() {
-        // WASPAS #1: Data Matrix Creation
+
+        // ── STEP 1 ── Fill criteria matrix buffer  (Dissertation Eq. 2.11) ────
+        // Overwrite criteriaMatrixBuffer in-place — no new arrays allocated.
         for (let i = 0; i < this.activePopulationSize; i++) {
-            const pop = this.population[i];
-            let chromosome = pop.individual;
+            const chromosome = this.population[i].individual;
 
             if (!this.constraintsSatisfied(chromosome)) {
-                pop.fitness = 0;
-                this.criteriaMatrixBuffer[i][0] = 0; // Symmetry
-                this.criteriaMatrixBuffer[i][1] = 0; // Empty Space Balance
-                this.criteriaMatrixBuffer[i][2] = 0; // Player-Exit Distance
-                this.criteriaMatrixBuffer[i][3] = 0; // Safe Zone
+                this.population[i].fitness = 0;
+                this.criteriaMatrixBuffer[i][0] = 0;
+                this.criteriaMatrixBuffer[i][1] = 0;
+                this.criteriaMatrixBuffer[i][2] = 0;
+                this.criteriaMatrixBuffer[i][3] = 0;
                 continue;
             }
 
@@ -107,54 +161,115 @@ class MGA {
             this.criteriaMatrixBuffer[i][3] = this.calculateSafeZone(chromosome);
         }
 
+        // ── PRE-STEP ── Update global criteria bounds in-place ────────────────
+        // Dissertation Section 2.4.1:
+        // "The normalisation process is adjusted to utilise the smallest
+        //  criterion values across all generations."
+        //
+        // MGA optimisation vs SGA: instead of scanning a full criteriaMatrixHistory
+        // array (O(n*l) memory, O(n*l) scan time), we maintain only four running
+        // min scalars and four running max scalars updated here in O(n) per generation.
         for (let i = 0; i < this.activePopulationSize; i++) {
-            let rawScores = this.criteriaMatrixBuffer[i];
-        
-            // WASPAS #2 & #3: Normalization and Neutrosophication
-            for (let j = 0; j < rawScores.length; j++) {
-                // Normalisasi (0 sampai 1)
-                let normalizedS = rawScores[j] / this.criteriaMaxValues[j];
-                
-                // Mencegah nilai menyentuh angka absolut 1 (Aturan Petrovas)
-                normalizedS = normalizedS * 0.9; 
+            for (let j = 0; j < NUM_CRITERIA; j++) {
+                const v = this.criteriaMatrixBuffer[i][j];
+                if (v < this.globalCriteriaMin[j]) this.globalCriteriaMin[j] = v;
+                if (v > this.globalCriteriaMax[j]) this.globalCriteriaMax[j] = v;
+            }
+        }
 
-                // Konversi skalar ke Himpunan Neutrosophic (Truth, Intermediacy, Falsehood)
-                this.neutrosophicBuffer[j].t = normalizedS; // Truth
-                this.neutrosophicBuffer[j].i = 1 - normalizedS; // Intermediacy
-                this.neutrosophicBuffer[j].f = 1 - normalizedS; // Falsehood
+        // Guard: avoid division by zero when min === max
+        for (let j = 0; j < NUM_CRITERIA; j++) {
+            if (this.globalCriteriaMax[j] === this.globalCriteriaMin[j])
+                this.globalCriteriaMax[j] = this.globalCriteriaMin[j] + 1;
+        }
+
+        // ── STEPS 2, 3 & 4 ── Normalise → Neutrosophicate → Ri and Pi ─────────
+        // Dissertation Eq. 2.12: rij = (xij - global_min_j) / (global_max_j - global_min_j)
+        // Dissertation Eq. 2.20: N(t) = C  (linear conversion, t = rij)
+        // Dissertation Eqs. 2.22–2.23: Ri = Σ wj*t,  Pi = Π t^wj
+        //
+        // MGA optimisation: N(t,i,f) sets are never stored. Following Petrovas's
+        // own final implementation: "research incrementally adds and multiplies
+        // them to generate the Ri and Pi values without having to store individual
+        // elements for each one." Results written directly into riBuffer/piBuffer.
+        for (let i = 0; i < this.activePopulationSize; i++) {
+            let Ri = 0;
+            let Pi = 1;
+
+            for (let j = 0; j < NUM_CRITERIA; j++) {
+                const lo  = this.globalCriteriaMin[j];
+                const hi  = this.globalCriteriaMax[j];
+
+                // Eq. 2.12 normalisation, clamped to [0.1, 0.9] per Section 2.4.1:
+                // "Criteria scores are computed and normalised to fit within
+                //  the range of 0.1 to 0.9."
+                const rij = Math.min(0.9, Math.max(0.1,
+                    (this.criteriaMatrixBuffer[i][j] - lo) / (hi - lo)
+                ));
+
+                // Eq. 2.20: t = C (truth = normalised scalar, inline — not stored)
+                const t = rij;
+                const w = this.criteriaWeights[j];
+
+                Ri += w * t;          // Eq. 2.22
+                Pi *= Math.pow(t, w); // Eq. 2.23
             }
 
-            // WASPAS #4 & #5: Weighted Sum Model (WSM) & Weighted Product Model (WPM)
-            let sum_t = 0;
-            let prod_t = 1;
+            this.riBuffer[i] = Ri;
+            this.piBuffer[i] = Pi;
 
-            for (let j = 0; j < this.neutrosophicBuffer.length; j++) {
-                let weight = this.criteriaWeights[j];
-                let truthVal = this.neutrosophicBuffer[j].t;
+            // Update running global Ri/Pi bounds in-place — Eqs. 2.27–2.30
+            // MGA optimisation: replaces full riPiHistory scan (SGA) with
+            // four running scalars updated per individual.
+            if (Ri < this.r1) this.r1 = Ri;
+            if (Pi < this.r2) this.r2 = Pi;
+            if (Ri > this.p1) this.p1 = Ri;
+            if (Pi > this.p2) this.p2 = Pi;
+        }
 
-                // Kalkulasi WSM (Pendekatan Aritmatika Neutrosophic dari Flowchart Petrovas)
-                let wsm_val = 1 - Math.pow(1 - truthVal, weight);
-                sum_t = sum_t + wsm_val - (sum_t * wsm_val);
+        // Guard degenerate bounds
+        if (this.p1 === this.r1) this.p1 = this.r1 + EPSILON;
+        if (this.p2 === this.r2) this.p2 = this.r2 + EPSILON;
 
-                // Kalkulasi WPM
-                let wpm_val = Math.pow(truthVal, weight);
-                prod_t = prod_t * wpm_val;
-            }
+        // ── STEP 5 ── Constant A and divisor d  (Eqs. 2.24–2.25) ─────────────
+        // A = Σ all past ki / nl
+        // MGA optimisation: replaces full fitnessHistory array (SGA) with
+        // two running scalars (fitnessSum, fitnessCount).
+        // On generation 0 no past fitness exists, so A defaults to 1.
+        const A = this.fitnessCount > 0
+            ? this.fitnessSum / this.fitnessCount
+            : 1;
+        const d = this.activePopulationSize * A; // Eq. 2.25
 
-            // WASPAS #6: Joint Generalized Criterion (Penggabungan WSM dan WPM)
-            // Rumus: Q_i = 0.5 * WSM + 0.5 * WPM
-            let Q_t = (0.5 * sum_t) + (0.5 * prod_t);
-            
-            // Asumsi untuk nilai intermediacy dan falsehood gabungan
-            let Q_i = 1 - Q_t;
-            let Q_f = 1 - Q_t;
+        // ── STEP 6 ── Appraisal scores kia, kib, kic → final ki ──────────────
+        // Results written into pre-allocated kia/kib/kicBuffers — no new objects.
+        for (let i = 0; i < this.activePopulationSize; i++) {
+            const Ri = this.riBuffer[i];
+            const Pi = this.piBuffer[i];
 
-            // WASPAS #7: Scalarization (Konversi kembali ke nilai Scalar untuk GA)
-            // Rumus: S = (3 + t - 2i - f) / 4
-            let finalFitnessScore = (3 + Q_t - (2 * Q_i) - Q_f) / 4;
+            // kia — arithmetic mean of Ri and Pi relative to d  (Eq. 2.26)
+            this.kiaBuffer[i] = (Ri + Pi) / (d + EPSILON);
 
-            // Memasukkan hasil akhir sebagai nilai fitness kromosom tersebut
-            this.population[i].fitness = finalFitnessScore;
+            // kib — relative score vs global min  (Eq. 2.31)
+            this.kibBuffer[i] = (Ri / (this.r1 + EPSILON)) +
+                                 (Pi / (this.r2 + EPSILON));
+
+            // kic — balanced compromise  (Eq. 2.32)
+            this.kicBuffer[i] =
+                (LAMBDA * Ri + (1 - LAMBDA) * Pi) /
+                (LAMBDA * this.p1 + (1 - LAMBDA) * this.p2 + EPSILON);
+
+            // ki — final ranking score  (Eq. 2.19)
+            const ki = Math.pow(
+                    Math.abs(this.kiaBuffer[i] * this.kibBuffer[i] * this.kicBuffer[i]),
+                    1 / 3
+                ) + (1 / 3) * (this.kiaBuffer[i] + this.kibBuffer[i] + this.kicBuffer[i]);
+
+            this.population[i].fitness = ki;
+
+            // Accumulate into running A totals — Teknik 4 (direct primitive write)
+            this.fitnessSum   += ki;
+            this.fitnessCount += 1;
         }
     }
 
@@ -337,16 +452,16 @@ class MGA {
 
     // Evolve the population to the next generation
     evolve() {
-        if (!this.evolutionHistory) this.evolutionHistory = [];
-        // Simpan snapshot dari populasi aktif saat ini
-        const currentActivePopulation = [];
-        for(let i = 0; i < this.activePopulationSize; i++) {
-            currentActivePopulation.push({
-                individual: this.clone(this.population[i].individual),
-                fitness: this.population[i].fitness
-            });
-        }
-        this.evolutionHistory.push(currentActivePopulation);
+        // if (!this.evolutionHistory) this.evolutionHistory = [];
+        // // Simpan snapshot dari populasi aktif saat ini
+        // const currentActivePopulation = [];
+        // for(let i = 0; i < this.activePopulationSize; i++) {
+        //     currentActivePopulation.push({
+        //         individual: this.clone(this.population[i].individual),
+        //         fitness: this.population[i].fitness
+        //     });
+        // }
+        // this.evolutionHistory.push(currentActivePopulation);
 
         // 4. Penyusutan Populasi Dinamis
         if (this.generation === this.shrinkGeneration) {
