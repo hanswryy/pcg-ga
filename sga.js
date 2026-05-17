@@ -349,6 +349,17 @@ class SGA {
     }
 
     // -------------------------------------------------------------------------
+    // CONSTRAINT c3 — A* pathfinding
+    // Dissertation Section 2.1.2:
+    // "Using a pathfinding algorithm to verify the existence of a passable
+    //  route between the player and exit."
+    // -------------------------------------------------------------------------
+    hasPath(individual, start, end) {
+        if (!start || !end) return false;
+        return aStar(individual, start, end);
+    }
+
+    // -------------------------------------------------------------------------
     // CONSTRAINT CHECKING — Dissertation Section 2.1.2
     // c1 — Player object exists
     // c2 — Exit object exists
@@ -467,17 +478,6 @@ class SGA {
         }
 
         return Math.max(0, 1.0 - (hazardCount / totalSquareArea));
-    }
-
-    // -------------------------------------------------------------------------
-    // CONSTRAINT c3 — A* pathfinding
-    // Dissertation Section 2.1.2:
-    // "Using a pathfinding algorithm to verify the existence of a passable
-    //  route between the player and exit."
-    // -------------------------------------------------------------------------
-    hasPath(individual, start, end) {
-        if (!start || !end) return false;
-        return aStar(individual, start, end);
     }
 
     // -------------------------------------------------------------------------

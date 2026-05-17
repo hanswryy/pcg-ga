@@ -140,6 +140,9 @@ class MGA {
     // Memory strategy: all intermediate values are written into pre-allocated
     // Float64Array buffers. No new objects or arrays are created here.
     evaluatePopulation() {
+        // Reset running fitness totals for the new generation's evaluation
+        this.fitnessSum = 0;
+        this.fitnessCount = 0;
 
         // ── STEP 1 ── Fill criteria matrix buffer  (Dissertation Eq. 2.11) ────
         // Overwrite criteriaMatrixBuffer in-place — no new arrays allocated.
@@ -452,19 +455,9 @@ class MGA {
 
     // Evolve the population to the next generation
     evolve() {
-        // if (!this.evolutionHistory) this.evolutionHistory = [];
-        // // Simpan snapshot dari populasi aktif saat ini
-        // const currentActivePopulation = [];
-        // for(let i = 0; i < this.activePopulationSize; i++) {
-        //     currentActivePopulation.push({
-        //         individual: this.clone(this.population[i].individual),
-        //         fitness: this.population[i].fitness
-        //     });
-        // }
-        // this.evolutionHistory.push(currentActivePopulation);
 
         // 4. Penyusutan Populasi Dinamis
-        if (this.generation === this.shrinkGeneration) {
+        if (this.generation > 0 && this.generation % this.shrinkGeneration === 0) {
             this.activePopulationSize = Math.floor(this.activePopulationSize * this.shrinkFactor);
         }
 
