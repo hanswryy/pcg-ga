@@ -140,10 +140,6 @@ class MGA {
     // Memory strategy: all intermediate values are written into pre-allocated
     // Float64Array buffers. No new objects or arrays are created here.
     evaluatePopulation() {
-        // Reset running fitness totals for the new generation's evaluation
-        this.fitnessSum = 0;
-        this.fitnessCount = 0;
-
         // ── STEP 1 ── Fill criteria matrix buffer  (Dissertation Eq. 2.11) ────
         // Overwrite criteriaMatrixBuffer in-place — no new arrays allocated.
         for (let i = 0; i < this.activePopulationSize; i++) {
@@ -454,42 +450,65 @@ class MGA {
     }
 
     // Evolve the population to the next generation
+    // Dissertation Section 2.2:
+    // "chromosomes below the median value are replaced with chromosomes from
+    //  the above-median array, and then 5% of the data in this new array is
+    //  mutated by assigning new random values."
+    //
+    // Implements median-split elitism using the pre-allocated nextPopulation
+    // buffer — no new Matrix objects are allocated per generation.
     evolve() {
 
-        // 4. Penyusutan Populasi Dinamis
+        // 4. Penyusutan Populasi Dinamis (Teknik 3)
         if (this.generation > 0 && this.generation % this.shrinkGeneration === 0) {
-            this.activePopulationSize = Math.max(1, Math.floor(this.activePopulationSize * this.shrinkFactor));
+            this.activePopulationSize = Math.max(2, Math.floor(this.activePopulationSize * this.shrinkFactor));
         }
 
-        // Buat populasi baru tanpa alokasi baru (menggunakan buffer yang ada)
-        for (let i = 0; i < this.activePopulationSize; i++) {
-            this.selectedIndicesBuffer[i] = this.tournamentSelection();
+        const n = this.activePopulationSize;
+
+        // Build fitness-descending index ordering into selectedIndicesBuffer.
+        // Truncate to active slice so .sort() doesn't drag stale tail entries
+        // (inactive slots beyond n still carry old fitness values).
+        const idxs = this.selectedIndicesBuffer;
+        for (let i = 0; i < n; i++) idxs[i] = i;
+        const pop = this.population;
+        const active = idxs.slice(0, n);
+        active.sort((a, b) => pop[b].fitness - pop[a].fitness);
+
+        // Copy parents into nextPopulation in sorted (best-first) order.
+        // No Matrix allocation — write tile-by-tile into pre-allocated targets.
+        for (let i = 0; i < n; i++) {
+            const src = pop[active[i]].individual;
+            const dst = this.nextPopulation[i].individual;
+            for (let y = 0; y < this.height; y++) {
+                for (let x = 0; x < this.width; x++) {
+                    dst.set(x, y, src.get(x, y));
+                }
+            }
+            this.nextPopulation[i].fitness = pop[active[i]].fitness;
         }
 
-        // Overwrite data ke nextPopulation tanpa membuat objek baru
-        for(let i = 0; i < this.activePopulationSize; i++) {
-            const parentIndex = this.selectedIndicesBuffer[i];
-            const parentMatrix = this.population[parentIndex].individual;
-            const targetMatrix = this.nextPopulation[i].individual;
-            
+        // Swap buffer pointers — population now holds best-first sorted parents.
+        const temp = this.population;
+        this.population = this.nextPopulation;
+        this.nextPopulation = temp;
+
+        // Median split: top half stays as elite, bottom half is overwritten
+        // with copies of the corresponding top-half parent, then mutated.
+        const halfSize = Math.floor(n / 2);
+        for (let i = halfSize; i < n; i++) {
+            const parentIdx = i - halfSize;          // pair offspring i ↔ parent i-half
+            const parentMatrix = this.population[parentIdx].individual;
+            const targetMatrix = this.population[i].individual;
             for (let y = 0; y < this.height; y++) {
                 for (let x = 0; x < this.width; x++) {
                     targetMatrix.set(x, y, parentMatrix.get(x, y));
                 }
             }
-            this.nextPopulation[i].fitness = this.population[parentIndex].fitness;
+            this.mutate(targetMatrix);
+            this.population[i].fitness = 0; // will be set by evaluatePopulation
         }
 
-        // Swap penunjuk populasi
-        let temp = this.population;
-        this.population = this.nextPopulation;
-        this.nextPopulation = temp;
-
-        // Terapkan mutasi pada paruh kedua dari populasi aktif
-        for (let i = Math.floor(this.activePopulationSize / 2); i < this.activePopulationSize; i++) {
-            this.mutate(this.population[i].individual);
-        }
-        
         this.evaluatePopulation();
         this.generation++;
     }
