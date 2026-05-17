@@ -458,7 +458,7 @@ class MGA {
 
         // 4. Penyusutan Populasi Dinamis
         if (this.generation > 0 && this.generation % this.shrinkGeneration === 0) {
-            this.activePopulationSize = Math.floor(this.activePopulationSize * this.shrinkFactor);
+            this.activePopulationSize = Math.max(1, Math.floor(this.activePopulationSize * this.shrinkFactor));
         }
 
         // Buat populasi baru tanpa alokasi baru (menggunakan buffer yang ada)
