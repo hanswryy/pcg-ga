@@ -9,7 +9,7 @@ const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.inner
 const renderer = new THREE.WebGLRenderer();
 renderer.setSize( window.innerWidth, window.innerHeight );
 document.body.appendChild( renderer.domElement );
-camera.position.z = 30;
+camera.position.z = 50;
 
 const startSgaButton = document.getElementById('start-sga');
 const startMgaButton = document.getElementById('start-mga');
@@ -23,14 +23,12 @@ let mga;
 
 startSgaButton.addEventListener('click', () => {
     const seed = parseInt(document.getElementById('seed-input').value) || 0;
-    setSeed(seed);
-    runSGA();
+    runSGA(seed);
 });
 
 startMgaButton.addEventListener('click', () => {
     const seed = parseInt(document.getElementById('seed-input').value) || 0;
-    setSeed(seed);
-    runMGA();
+    runMGA(seed);
 });
 
 function createHeapRecorder(sampleEvery = 100) {
@@ -85,54 +83,74 @@ function updateExperimentDisplay(algorithmName, fitness, report) {
     fitnessDisplay.textContent = `${algorithmName} Best Fitness: ${fitness} | Mean Heap: ${formatBytesToMB(report.meanUsedHeapSize)} MB (${Math.round(report.meanUsedHeapSize)} bytes) | Samples: ${report.samples.length}`;
 }
 
-function runSGA() {
-    sga = new SGA(50);
-    sga.initializePopulation();
-    const heapRecorder = createHeapRecorder(100);
+const LEVEL_COUNT = 5;
 
-    const generations = 2000; // Increased generations to 2000
-    for (let i = 0; i < generations; i++) {
-        sga.evolve();
-        heapRecorder.record(i + 1);
+function runSGA(baseSeed) {
+    const individuals = [];
+    let totalHeapReport = null;
+
+    for (let s = 0; s < LEVEL_COUNT; s++) {
+        setSeed(baseSeed + s);
+        sga = new SGA(50);
+        sga.initializePopulation();
+        const heapRecorder = createHeapRecorder(100);
+
+        const generations = 2000;
+        for (let i = 0; i < generations; i++) {
+            sga.evolve();
+            heapRecorder.record(i + 1);
+        }
+
+        if (s === 0) totalHeapReport = heapRecorder.getReport();
+
+        const best = sga.getBestIndividual();
+        individuals.push(best);
+        console.log(`[SGA] seed=${baseSeed + s} fitness=${best.fitness}`);
     }
 
-    const heapReport = heapRecorder.getReport();
-    if (heapReport.canMeasure) {
-        console.log(`[SGA] Mean usedJSHeapSize: ${Math.round(heapReport.meanUsedHeapSize)} bytes`, heapReport.samples);
+    if (totalHeapReport.canMeasure) {
+        console.log(`[SGA] Mean usedJSHeapSize: ${Math.round(totalHeapReport.meanUsedHeapSize)} bytes`);
     } else {
         console.warn('[SGA] performance.memory.usedJSHeapSize is not available in this browser.');
     }
 
-    const best = sga.getBestIndividual();
-    const bestIndividual = best.individual;
-    updateExperimentDisplay('SGA', best.fitness, heapReport);
- 
-    renderGrid(bestIndividual);
+    const avgFitness = (individuals.reduce((sum, b) => sum + b.fitness, 0) / LEVEL_COUNT).toFixed(4);
+    updateExperimentDisplay('SGA', avgFitness, totalHeapReport);
+    renderMultipleGrids(individuals.map(b => b.individual));
 }
 
-function runMGA() {
-    mga = new MGA(50);
-    mga.initializePopulation();
-    const heapRecorder = createHeapRecorder(100);
+function runMGA(baseSeed) {
+    const individuals = [];
+    let totalHeapReport = null;
 
-    const generations = 2000; // Increased generations to 2000
-    for (let i = 0; i < generations; i++) {
-        mga.evolve();
-        heapRecorder.record(i + 1);
+    for (let s = 0; s < LEVEL_COUNT; s++) {
+        setSeed(baseSeed + s);
+        mga = new MGA(50);
+        mga.initializePopulation();
+        const heapRecorder = createHeapRecorder(100);
+
+        const generations = 2000;
+        for (let i = 0; i < generations; i++) {
+            mga.evolve();
+            heapRecorder.record(i + 1);
+        }
+
+        if (s === 0) totalHeapReport = heapRecorder.getReport();
+
+        const best = mga.getBestIndividual();
+        individuals.push(best);
+        console.log(`[MGA] seed=${baseSeed + s} fitness=${best.fitness}`);
     }
 
-    const heapReport = heapRecorder.getReport();
-    if (heapReport.canMeasure) {
-        console.log(`[MGA] Mean usedJSHeapSize: ${Math.round(heapReport.meanUsedHeapSize)} bytes`, heapReport.samples);
+    if (totalHeapReport.canMeasure) {
+        console.log(`[MGA] Mean usedJSHeapSize: ${Math.round(totalHeapReport.meanUsedHeapSize)} bytes`);
     } else {
         console.warn('[MGA] performance.memory.usedJSHeapSize is not available in this browser.');
     }
 
-    const best = mga.getBestIndividual();
-    const bestIndividual = best.individual;
-    updateExperimentDisplay('MGA', best.fitness, heapReport);
-
-    renderGrid(bestIndividual);
+    const avgFitness = (individuals.reduce((sum, b) => sum + b.fitness, 0) / LEVEL_COUNT).toFixed(4);
+    updateExperimentDisplay('MGA', avgFitness, totalHeapReport);
+    renderMultipleGrids(individuals.map(b => b.individual));
 }
 
 function getColorForTile(tileType) {
@@ -154,26 +172,33 @@ function getColorForTile(tileType) {
     }
 }
 
-function renderGrid(individual) {
-    // Clear previous grid
-    while(gridGroup.children.length > 0){ 
+function renderMultipleGrids(individuals) {
+    while (gridGroup.children.length > 0) {
         const object = gridGroup.children[0];
         object.geometry.dispose();
         object.material.dispose();
         gridGroup.remove(object);
     }
 
-    const geometry = new THREE.PlaneGeometry( 1, 1 );
-    for (let i = 0; i < individual.height; i++) {
-        for (let j = 0; j < individual.width; j++) {
-            const value = individual.get(j, i);
-            const color = getColorForTile(value);
-            const material = new THREE.MeshBasicMaterial( { color: color } );
-            const plane = new THREE.Mesh( geometry, material );
-            plane.position.x = j - (individual.width / 2);
-            plane.position.y = i - (individual.height / 2);
-            gridGroup.add( plane );
+    const geometry = new THREE.PlaneGeometry(1, 1);
+    const gap = 2;
+
+    const totalWidth = individuals.reduce((sum, ind) => sum + ind.width, 0) + gap * (individuals.length - 1);
+    let offsetX = -totalWidth / 2;
+
+    for (const individual of individuals) {
+        for (let i = 0; i < individual.height; i++) {
+            for (let j = 0; j < individual.width; j++) {
+                const value = individual.get(j, i);
+                const color = getColorForTile(value);
+                const material = new THREE.MeshBasicMaterial({ color });
+                const plane = new THREE.Mesh(geometry, material);
+                plane.position.x = offsetX + j + 0.5;
+                plane.position.y = i - individual.height / 2;
+                gridGroup.add(plane);
+            }
         }
+        offsetX += individual.width + gap;
     }
 }
 
