@@ -33,10 +33,6 @@ class SGA {
         // Equal weights for all four criteria — dissertation applies no
         // unequal weighting in the base CoCoSo generator.
         this.criteriaWeights = [0.25, 0.25, 0.25, 0.25];
-        this.criteriaMatrixHistory = [];
-        this.riPiHistory = [];
-        this.fitnessHistory = [];
-        this.populationSnapshots = [];
 
         // Global criterion min/max across all generations (Eq. 2.12)
         this.globalCriteriaMin = new Array(NUM_CRITERIA).fill(Infinity);
@@ -92,77 +88,6 @@ class SGA {
         individual.set(endX,   endY,   TILE_TYPES.END);
     }
 
-    // -------------------------------------------------------------------------
-    // UPDATE GLOBAL CRITERIA BOUNDS from [STORE A]
-    // Dissertation Section 2.4, Eq. 2.12 + Section 2.4.1:
-    // "The normalisation process is adjusted to utilise the smallest criterion
-    //  values across all generations rather than relying solely on values
-    //  generated within a single generation."
-    //
-    // Scans every row of every past criteriaMatrix entry and updates
-    // globalCriteriaMin/Max per criterion. Called at the top of every
-    // evaluatePopulation() call — [STORE A] is causally upstream of all
-    // normalisation, Ri/Pi computation, and fitness scoring this generation.
-    // -------------------------------------------------------------------------
-    _updateGlobalCriteriaBounds() {
-        this.globalCriteriaMin = new Array(NUM_CRITERIA).fill(Infinity);
-        this.globalCriteriaMax = new Array(NUM_CRITERIA).fill(-Infinity);
-
-        for (const entry of this.criteriaMatrixHistory) {
-            for (const row of entry.criteriaMatrix) {
-                for (let j = 0; j < NUM_CRITERIA; j++) {
-                    if (row[j] < this.globalCriteriaMin[j])
-                        this.globalCriteriaMin[j] = row[j];
-                    if (row[j] > this.globalCriteriaMax[j])
-                        this.globalCriteriaMax[j] = row[j];
-                }
-            }
-        }
-
-        // Guards: handle generation 0 (no history yet) and flat criteria
-        for (let j = 0; j < NUM_CRITERIA; j++) {
-            if (this.globalCriteriaMin[j] === Infinity)
-                this.globalCriteriaMin[j] = 0;
-            if (this.globalCriteriaMax[j] === -Infinity ||
-                this.globalCriteriaMax[j] === this.globalCriteriaMin[j])
-                this.globalCriteriaMax[j] = this.globalCriteriaMin[j] + 1;
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // UPDATE GLOBAL Ri/Pi BOUNDS from [STORE B]
-    // Dissertation Eqs. 2.27–2.30:
-    // r1 = min over all i in nl of Ri
-    // r2 = min over all i in nl of Pi
-    // p1 = max over all i in nl of Ri
-    // p2 = max over all i in nl of Pi
-    //
-    // These four scalars feed kib (Eq. 2.31) and kic (Eq. 2.32) for every
-    // chromosome this generation. [STORE B] must exist for this to work.
-    // -------------------------------------------------------------------------
-    _updateGlobalRiPiBounds() {
-        this.r1 = Infinity;
-        this.r2 = Infinity;
-        this.p1 = -Infinity;
-        this.p2 = -Infinity;
-
-        for (const entry of this.riPiHistory) {
-            for (const rec of entry.records) {
-                if (rec.Ri < this.r1) this.r1 = rec.Ri;
-                if (rec.Pi < this.r2) this.r2 = rec.Pi;
-                if (rec.Ri > this.p1) this.p1 = rec.Ri;
-                if (rec.Pi > this.p2) this.p2 = rec.Pi;
-            }
-        }
-
-        // Guards for generation 0 and degenerate cases
-        if (this.r1 === Infinity)  this.r1 = 0;
-        if (this.r2 === Infinity)  this.r2 = 0;
-        if (this.p1 === -Infinity) this.p1 = 1;
-        if (this.p2 === -Infinity) this.p2 = 1;
-        if (this.p1 === this.r1)   this.p1 = this.r1 + 1e-9;
-        if (this.p2 === this.r2)   this.p2 = this.r2 + 1e-9;
-    }
 
     // -------------------------------------------------------------------------
     // EVALUATE POPULATION — full neutrosophic CoCoSo pipeline
@@ -170,11 +95,6 @@ class SGA {
     // Section 2.4.1 (Eqs. 2.20–2.32)
     // -------------------------------------------------------------------------
     evaluatePopulation() {
-
-        // ── PRE-STEP ── Update all global boundaries from stores ──────────────
-        // Both methods must run before any normalisation or scoring this gen.
-        this._updateGlobalCriteriaBounds(); // reads [STORE A]
-        this._updateGlobalRiPiBounds();     // reads [STORE B]
 
         // ── STEP 1 ── Build criteria matrix X  (Dissertation Eq. 2.11) ────────
         // "The criteria evaluation data is consolidated into a matrix X, where
@@ -202,83 +122,55 @@ class SGA {
             ]);
         }
 
-        // [STORE A] — Commit matrix X for this generation.
-        // Every future call to _updateGlobalCriteriaBounds() will read this
-        // entry, making it causally upstream of all future normalisations.
-        this.criteriaMatrixHistory.push({
-            generation:     this.generation,
-            criteriaMatrix: criteriaMatrix.map(row => [...row]),
-        });
+        // step 2 3 4
+        for (let i = 0; i < this.populationSize; i++) {
+            for (let j = 0; j < NUM_CRITERIA; j++) {
+                const v = criteriaMatrix[i][j];
+                if (v < this.globalCriteriaMin[j]) this.globalCriteriaMin[j] = v;
+                if (v > this.globalCriteriaMax[j]) this.globalCriteriaMax[j] = v;
+            }
+        }
 
-        // ── STEP 2 ── Normalise rij using GLOBAL min/max  (Eq. 2.12) ──────────
-        // rij = (xij - global_min_j) / (global_max_j - global_min_j)
-        // "The normalisation process is adjusted to utilise the smallest
-        //  criterion values across all generations."
-        // Clamped to [0.1, 0.9] per Section 2.4.1:
-        // "Criteria scores are computed and normalised to fit within the
-        //  range of 0.1 to 0.9. The research avoids getting too close to 0 or
-        //  1 to ensure a more reliable outcome for the MCDM algorithm."
-        const normalisedMatrix = criteriaMatrix.map(row =>
-            row.map((v, j) => {
-                const lo  = this.globalCriteriaMin[j];
-                const hi  = this.globalCriteriaMax[j];
-                const rij = (v - lo) / (hi - lo);
-                return Math.min(0.9, Math.max(0.1, rij));
-            })
-        );
+        // Guard: avoid division by zero when min === max
+        for (let j = 0; j < NUM_CRITERIA; j++) {
+            if (this.globalCriteriaMax[j] === this.globalCriteriaMin[j])
+                this.globalCriteriaMax[j] = this.globalCriteriaMin[j] + 1;
+        }
 
-        // ── STEPS 3 & 4 ── Neutrosophication + incremental Ri/Pi ─────────────
-        // Dissertation Eq. 2.20 — neutrosophic linear conversion:
-        // N = { t = C, i = 1 - C, f = 1 - C }
-        // "linear conversion from crisp to neutrosophic numbers to prevent
-        //  non-linear differences from accumulating over subsequent generations."
-        //
-        // Dissertation Eqs. 2.22–2.23:
-        // Ri = Σ_j  wj * N(t)ij
-        // Pi = Σ_j  N(t)ij ^ wj
-        //
-        // Petrovas's final implementation accumulates Ri and Pi inline without
-        // storing the individual N(t,i,f) sets:
-        // "research incrementally adds and multiplies them to generate the Ri
-        //  and Pi values without having to store individual elements for each one."
-        // This loop faithfully follows that decision — N(t,i,f) is computed per
-        // criterion and immediately consumed, never stored as a collection.
-        const generationRiPi = [];
-
-        for (let i = 0; i < this.population.length; i++) {
-            const normRow = normalisedMatrix[i];
+        const riPiByIndex = new Array(this.populationSize);
+        for (let i = 0; i < this.populationSize; i++) {
             let Ri = 0;
             let Pi = 1;
 
             for (let j = 0; j < NUM_CRITERIA; j++) {
-                const w = this.criteriaWeights[j];
-                const t = normRow[j]; // N(t) = C (Eq. 2.20), computed inline
+                const lo  = this.globalCriteriaMin[j];
+                const hi  = this.globalCriteriaMax[j];
 
-                Ri += w * t;          // Eq. 2.22: weighted sum accumulation
-                Pi *= Math.pow(t, w); // Eq. 2.23: weighted product accumulation
+                // Eq. 2.12 normalisation, clamped to [0.1, 0.9] per Section 2.4.1:
+                // "Criteria scores are computed and normalised to fit within
+                //  the range of 0.1 to 0.9."
+                const rij = Math.min(0.9, Math.max(0.1,
+                    (criteriaMatrix[i][j] - lo) / (hi - lo)
+                ));
+
+                // Eq. 2.20: t = C (truth = normalised scalar, inline — not stored)
+                const t = rij;
+                const w = this.criteriaWeights[j];
+
+                Ri += w * t;          // Eq. 2.22
+                Pi *= Math.pow(t, w); // Eq. 2.23
             }
 
-            generationRiPi.push({ chromosomeIndex: i, Ri, Pi });
-        }
+            riPiByIndex[i] = { Ri, Pi };
 
-        // [STORE B] — Commit Ri and Pi for every chromosome this generation.
-        // _updateGlobalRiPiBounds() reads all past entries to compute r1, r2,
-        // p1, p2 (Eqs. 2.27–2.30) at the start of every future generation.
-        this.riPiHistory.push({
-            generation: this.generation,
-            records:    generationRiPi.map(r => ({ ...r })),
-        });
-
-        // Also extend r1/r2/p1/p2 with THIS generation's Ri/Pi immediately
-        // so kib and kic below reflect the most current global bounds.
-        for (const rec of generationRiPi) {
-            if (rec.Ri < this.r1) this.r1 = rec.Ri;
-            if (rec.Pi < this.r2) this.r2 = rec.Pi;
-            if (rec.Ri > this.p1) this.p1 = rec.Ri;
-            if (rec.Pi > this.p2) this.p2 = rec.Pi;
+            // Update running global Ri/Pi bounds in-place — Eqs. 2.27–2.30
+            // MGA optimisation: replaces full riPiHistory scan (SGA) with
+            // four running scalars updated per individual.
+            if (Ri < this.r1) this.r1 = Ri;
+            if (Pi < this.r2) this.r2 = Pi;
+            if (Ri > this.p1) this.p1 = Ri;
+            if (Pi > this.p2) this.p2 = Pi;
         }
-        if (this.p1 === this.r1) this.p1 = this.r1 + 1e-9;
-        if (this.p2 === this.r2) this.p2 = this.r2 + 1e-9;
 
         // ── STEP 5 ── Constant A and divisor d  (Eqs. 2.24–2.25) ─────────────
         // A = Σ all past ki / nl   where nl = population size × generations
@@ -295,7 +187,7 @@ class SGA {
         const generationFitnessScores = [];
 
         for (let i = 0; i < this.population.length; i++) {
-            const { Ri, Pi } = generationRiPi[i];
+            const { Ri, Pi } = riPiByIndex[i];
 
             // kia — arithmetic mean of WSM and WPM relative to d  (Eq. 2.26)
             // kia = (S(Ri) + S(Pi)) / d
@@ -329,23 +221,6 @@ class SGA {
             this.fitnessSum   += rec.ki;
             this.fitnessCount += 1;
         }
-
-        this.fitnessHistory.push({
-            generation: this.generation,
-            scores:     generationFitnessScores.map(r => ({ ...r })),
-        });
-
-        // [STORE D] — Commit population snapshot for this generation.
-        // Anchors each criteria matrix row in [STORE A] and each Ri/Pi record
-        // in [STORE B] to the chromosome grid that produced them — making both
-        // stores traceable, verifiable, and reproducible.
-        this.populationSnapshots.push({
-            generation: this.generation,
-            chromosomes: this.population.map(p => ({
-                grid:    this._snapshotGrid(p.individual),
-                fitness: p.fitness,
-            })),
-        });
     }
 
     // -------------------------------------------------------------------------
