@@ -33,6 +33,7 @@ import * as THREE from 'three';
 import { Matrix }          from './matrix.js';
 import SGA, { TILE_TYPES } from './sga.js';
 import MGA                 from './mga.js';
+import MGA_NoShrink         from './mga_no_ps.js';
 import { setSeed }         from './seeded-random.js';
 
 // =============================================================================
@@ -47,6 +48,7 @@ camera.position.z = 50;
 
 const startSgaButton = document.getElementById('start-sga');
 const startMgaButton = document.getElementById('start-mga');
+const startMgaNoShrinkButton = document.getElementById('start-mga-no-shrink');
 const fitnessDisplay = document.getElementById('fitness-display');
 
 let gridGroup = new THREE.Group();
@@ -525,12 +527,14 @@ async function runSGA(baseSeed) {
     _running = true;
     startSgaButton.disabled = true;
     startMgaButton.disabled = true;
+    if (startMgaNoShrinkButton) startMgaNoShrinkButton.disabled = true;
     try {
         await _runAndRender(SGA, 'SGA', baseSeed);
     } finally {
         _running = false;
         startSgaButton.disabled = false;
         startMgaButton.disabled = false;
+        if (startMgaNoShrinkButton) startMgaNoShrinkButton.disabled = false;
     }
 }
 
@@ -539,12 +543,30 @@ async function runMGA(baseSeed) {
     _running = true;
     startSgaButton.disabled = true;
     startMgaButton.disabled = true;
+    if (startMgaNoShrinkButton) startMgaNoShrinkButton.disabled = true;
     try {
         await _runAndRender(MGA, 'MGA', baseSeed);
     } finally {
         _running = false;
         startSgaButton.disabled = false;
         startMgaButton.disabled = false;
+        if (startMgaNoShrinkButton) startMgaNoShrinkButton.disabled = false;
+    }
+}
+
+async function runMGA_NoShrink(baseSeed) {
+    if (_running) return;
+    _running = true;
+    startSgaButton.disabled = true;
+    startMgaButton.disabled = true;
+    if (startMgaNoShrinkButton) startMgaNoShrinkButton.disabled = true;
+    try {
+        await _runAndRender(MGA_NoShrink, 'MGA(no-shrink)', baseSeed);
+    } finally {
+        _running = false;
+        startSgaButton.disabled = false;
+        startMgaButton.disabled = false;
+        if (startMgaNoShrinkButton) startMgaNoShrinkButton.disabled = false;
     }
 }
 
@@ -557,6 +579,13 @@ startMgaButton.addEventListener('click', () => {
     const seed = parseInt(document.getElementById('seed-input').value) || 0;
     runMGA(seed);
 });
+
+if (startMgaNoShrinkButton) {
+    startMgaNoShrinkButton.addEventListener('click', () => {
+        const seed = parseInt(document.getElementById('seed-input').value) || 0;
+        runMGA_NoShrink(seed);
+    });
+}
 
 // =============================================================================
 // RENDERING (unchanged from original)
